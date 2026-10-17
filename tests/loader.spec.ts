@@ -422,6 +422,67 @@ test.group('Loader', (group) => {
     assert.equal(result.stdout.trim(), '<button type="submit">Login</button>')
   })
 
+  test('compile tsx files loaded through hot-hook and reload them on change', async ({
+    assert,
+    fs,
+  }) => {
+    await fs.createJson('package.json', { type: 'module', hotHook: { boundaries: ['./view.tsx'] } })
+    await fs.createJson('tsconfig.json', {
+      compilerOptions: {
+        jsx: 'react-jsx',
+        jsxImportSource: 'preact',
+        rewriteRelativeImportExtensions: true,
+      },
+    })
+
+    await fs.create(
+      'view.tsx',
+      `
+      interface ViewProps { text: string }
+      export const value = 'one'
+      export const hot = typeof import.meta.hot
+      export function View(props: ViewProps) {
+        return <b>{props.text}</b>
+      }
+    `
+    )
+
+    await fs.create(
+      'index.ts',
+      `
+      import { readFileSync, writeFileSync } from 'node:fs'
+      import render from 'preact-render-to-string'
+
+      async function load() {
+        const mod = await import('./view.tsx')
+        return render(mod.View({ text: mod.value })) + ' ' + mod.hot
+      }
+
+      console.log(await load())
+      writeFileSync('view.tsx', readFileSync('view.tsx', 'utf8').replace("'one'", "'two'"))
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      console.log(await load())
+      process.exit(0)
+    `
+    )
+
+    const result = await spawnPromisified(
+      process.execPath,
+      [
+        '--no-warnings',
+        '--import',
+        join(process.cwd(), 'build/index.js'),
+        '--import',
+        import.meta.resolve('hot-hook/register'),
+        'index.ts',
+      ],
+      { cwd: fs.basePath }
+    )
+
+    assert.equal(result.stderr, '')
+    assert.equal(result.stdout.trim(), '<b>one</b> object\n<b>two</b> object')
+  })
+
   test('do not allow .tsx file import when rewriteRelativeImportExtensions is disabled', async ({
     assert,
     fs,
